@@ -16,8 +16,13 @@ contract PowaRevenueDistributor is Ownable {
     struct Epoch {
         POWA investorToken;
         POWA contributorToken;
-        uint64 weight;
+        uint64 weight;                 // 1e4 ≃ 100 %
+        uint256 invWeightedSupply;     // investorToken.totalSupply * weight
+        uint256 conWeightedSupply;     // contributorToken.totalSupply * weight
     }
+
+    uint256 public totalWeightedSupply; // sum of all epoch weighted supplies
+
 
     Epoch[] public epochs;
 
@@ -61,10 +66,15 @@ contract PowaRevenueDistributor is Ownable {
         );
 
         epochs.push(Epoch({
-            investorToken:     investorToken,
-            contributorToken:  contributorToken,
-            weight: epochWeight
+            investorToken: investorToken,
+            contributorToken: contributorToken,
+            weight: w
+            invWeightedSupply: initialInvestorSupply * w,
+            conWeightedSupply: initialContributorSupply * w,
         }));
+
+        totalWeightedSupply += (initialInvestorSupply + initialContributorSupply) * w;
+
 
         emit EpochCreated(
             epochs.length-1,
@@ -72,6 +82,33 @@ contract PowaRevenueDistributor is Ownable {
             address(contributorToken)
         );
     }
+
+    function notifySupplyChange(
+        uint256 epochIdx,
+        uint256 oldSupply,
+        uint256 newSupply
+    ) external {
+        Epoch storage e = epochs[epochIdx];
+        bool isInvestorToken = msg.sender == address(e.investorToken);
+
+        require(
+            isInvestorToken ||
+            msg.sender == address(e.contributorToken),
+            "unauthorised"
+        );
+
+        uint256 oldWeighted = oldSupply * e.weight;
+        uint256 newWeighted = newSupply * e.weight;
+
+        totalWeightedSupply = totalWeightedSupply - oldWeighted + newWeighted;
+
+        if (isInvestorToken)  {
+            e.invWeightedSupply = newWeighted;
+        } else {
+            e.conWeightedSupply = newWeighted;
+        }
+    }
+
 
     /**
      * @notice Split `amount` of `revenueAsset` over every active epoch using
