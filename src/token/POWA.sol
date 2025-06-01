@@ -6,12 +6,15 @@ import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/utils/math/Math.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
+import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+
+import "../Distributor.sol";
 
 interface ITarget {
   function onClaimRevenue(address account, uint256 amount) external returns (bytes32);
 }
 
-contract POWA is ERC20 {
+contract POWA is ERC20, ReentrancyGuard {
   using SafeERC20 for IERC20;
 
   uint256 private constant PRECISION = 1e18;
@@ -22,6 +25,8 @@ contract POWA is ERC20 {
 
   /// @dev scaled by 1e18: total revenue per share accrued so far
   uint256 public accRevenuePerShare;
+
+  uint256 public immutable epochIdx;
   
   struct AccountInfo {
     address target;
@@ -31,17 +36,22 @@ contract POWA is ERC20 {
 
   mapping(address => AccountInfo) private accountInfo;
 
+
+  event TargetSet(address indexed account, address indexed target);
+
   constructor(
     string memory name_,
     string memory symbol_,
     uint256 initialSupply,
     IERC20 _revenueToken,
     address _distributor,
-    address initialHolder
+    address initialHolder,
+    uint256 _epochIdx
   ) ERC20(name_, symbol_) {
     require(initialSupply > 0, "zero supply");
     revenueToken  = _revenueToken;
     distributor   = _distributor;
+    epochIdx = _epochIdx;
     _mint(initialHolder, initialSupply);
   }
 
@@ -61,7 +71,21 @@ contract POWA is ERC20 {
       Math.mulDiv(actualAmount, PRECISION, supply);
   }
 
-  function claimToTarget(address claimFor) external {
+
+    function setTarget(address newTarget) external nonReentrant {
+        require(newTarget != address(0), "zero target");
+
+        // optional handshake probe (zero-amount call)
+        try ITarget(newTarget).onClaimRevenue(msg.sender, 0) returns (bytes32 ret) {
+            require(ret == TARGET_HASH, "bad target handshake");
+        } catch {
+            revert("target probe failed");
+        }
+        accountInfo[msg.sender].target = newTarget;
+        emit TargetSet(msg.sender, newTarget);
+    }
+
+  function claimToTarget(address claimFor) external nonReentrant {
     _updateAccount(claimFor);
     
     AccountInfo storage account = accountInfo[claimFor];
@@ -83,13 +107,32 @@ contract POWA is ERC20 {
 
   /// @dev OZ‐v5 hook called on mint, burn, or transfer
   function _update(
-    address from,
-    address to,
-    uint256 value
+      address from,
+      address to,
+      uint256 value
   ) internal override {
-    if (from   != address(0)) _updateAccount(from);
-    if (to   != address(0)) _updateAccount(to);
-    super._update(from, to, value); // call super._update AFTER _updateAccount to avoid double count
+      // ---- 1. Remember supply before the change
+      uint256 supplyBefore = totalSupply();
+      bool supplyChanges   = (from == address(0) || to == address(0));
+
+      // ---- 2. Normal revenue-accrual bookkeeping
+      if (from != address(0)) _updateAccount(from);
+      if (to   != address(0)) _updateAccount(to);
+
+      // ---- 3. Let OZ mutate balances / totalSupply
+      super._update(from, to, value);
+
+      // ---- 4. If totalSupply changed, notify distributor
+      if (supplyChanges) {
+          uint256 supplyAfter = totalSupply();
+          if (supplyAfter != supplyBefore) {
+              PowaRevenueDistributor(distributor).notifySupplyUpdate(
+                  epochIdx,
+                  supplyBefore,
+                  supplyAfter
+              );
+          }
+      }
   }
 
   /// @dev accrue any new revenue since last checkpoint

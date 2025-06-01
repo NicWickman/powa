@@ -5,9 +5,10 @@ import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/utils/math/Math.sol";
+import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "./token/POWA.sol";
 
-contract PowaRevenueDistributor is Ownable {
+contract PowaRevenueDistributor is Ownable, ReentrancyGuard {
     using SafeERC20 for IERC20;
 
     address public ocfVault;
@@ -53,7 +54,8 @@ contract PowaRevenueDistributor is Ownable {
             initialInvestorSupply,
             revenueAsset,
             address(this),
-            ocfVault
+            ocfVault,
+            epochs.length
         );
 
         POWA contributorToken = new POWA(
@@ -62,18 +64,22 @@ contract PowaRevenueDistributor is Ownable {
             initialContributorSupply,
             revenueAsset,
             address(this),
-            ocfVault
+            ocfVault,
+            epochs.length
         );
+
+        uint invWeightedSupply = initialInvestorSupply * epochWeight;
+        uint conWeightedSupply = initialContributorSupply * epochWeight;
 
         epochs.push(Epoch({
             investorToken: investorToken,
             contributorToken: contributorToken,
-            weight: w
-            invWeightedSupply: initialInvestorSupply * w,
-            conWeightedSupply: initialContributorSupply * w,
+            weight: epochWeight,
+            invWeightedSupply: invWeightedSupply,
+            conWeightedSupply: conWeightedSupply
         }));
 
-        totalWeightedSupply += (initialInvestorSupply + initialContributorSupply) * w;
+        totalWeightedSupply += invWeightedSupply + conWeightedSupply;
 
 
         emit EpochCreated(
@@ -83,7 +89,7 @@ contract PowaRevenueDistributor is Ownable {
         );
     }
 
-    function notifySupplyChange(
+    function notifySupplyUpdate(
         uint256 epochIdx,
         uint256 oldSupply,
         uint256 newSupply
@@ -110,72 +116,31 @@ contract PowaRevenueDistributor is Ownable {
     }
 
 
-    /**
-     * @notice Split `amount` of `revenueAsset` over every active epoch using
-     *         (totalSupply × weight) as the pro-rata key and push each slice to
-     *         the corresponding POWA token, which then rebases.
-     *
-     * @dev    - Weights are uint64 in basis-points (10 000 = 1.0000×).
-     */
-    function depositRevenue(uint256 amount) external {
+    function depositRevenue(uint256 amount) external nonReentrant  {
         require(amount > 0, "zero amount");
 
         revenueAsset.safeTransferFrom(msg.sender, address(this), amount);
         uint256 distributable = revenueAsset.balanceOf(address(this));
+        uint256 denom = totalWeightedSupply;
+        require(denom != 0, "no shares outstanding");
 
-        /* -------- first pass : accumulate weighted supply -------- */
-        uint256 weightedTotal = 0;
-        uint256 n = epochs.length;
-
-        for (uint256 i = 0; i < n; ++i) {
+        for (uint256 i; i < epochs.length; ++i) {
             Epoch storage e = epochs[i];
-            if (address(e.investorToken) == address(0)) continue;
 
-            uint256 investorWeighted = Math.mulDiv(
-                e.investorToken.totalSupply(),
-                e.weight,
-                1
-            );
-            uint256 contributorWeighted = Math.mulDiv(
-                e.contributorToken.totalSupply(),
-                e.weight,
-                1
-            );
+            uint256 invSlice = Math.mulDiv(distributable, e.invWeightedSupply, denom);
+            uint256 conSlice = Math.mulDiv(distributable, e.conWeightedSupply, denom);
 
-            weightedTotal += investorWeighted + contributorWeighted;
-        }
-        
-        require(weightedTotal != 0, "no shares outstanding");
-
-        /* -------- second pass : push slices and rebase -------- */
-        for (uint256 i = 0; i < n; ++i) {
-            Epoch storage e = epochs[i];
-            if (address(e.investorToken) == address(0)) continue;
-
-            uint256 investorSlice = Math.mulDiv(
-                distributable,
-                e.investorToken.totalSupply() * e.weight,
-                weightedTotal,
-                Math.Rounding.Floor
-            );
-
-            uint256 contributorSlice = Math.mulDiv(
-                distributable,
-                e.contributorToken.totalSupply() * e.weight,
-                weightedTotal,
-                Math.Rounding.Floor
-            );
-
-            if (investorSlice != 0) {
-                revenueAsset.approve(address(e.investorToken), investorSlice);
-                e.investorToken.distribute(investorSlice);
+            if (invSlice != 0) {
+                revenueAsset.approve(address(e.investorToken), invSlice);
+                e.investorToken.distribute(invSlice);
                 revenueAsset.approve(address(e.investorToken), 0);
             }
-            if (contributorSlice != 0) {
-                revenueAsset.approve(address(e.contributorToken), contributorSlice);
-                e.contributorToken.distribute(contributorSlice);
+            if (conSlice != 0) {
+                revenueAsset.approve(address(e.contributorToken), conSlice);
+                e.contributorToken.distribute(conSlice);
                 revenueAsset.approve(address(e.contributorToken), 0);
             }
         }
     }
+
 }
