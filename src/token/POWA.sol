@@ -75,7 +75,7 @@ contract POWA is ERC20, ReentrancyGuard {
     function setTarget(address newTarget) external nonReentrant {
         require(newTarget != address(0), "zero target");
 
-        // optional handshake probe (zero-amount call)
+        // sanity check the target
         try ITarget(newTarget).onClaimRevenue(msg.sender, 0) returns (bytes32 ret) {
             require(ret == TARGET_HASH, "bad target handshake");
         } catch {
@@ -111,18 +111,14 @@ contract POWA is ERC20, ReentrancyGuard {
       address to,
       uint256 value
   ) internal override {
-      // ---- 1. Remember supply before the change
       uint256 supplyBefore = totalSupply();
       bool supplyChanges   = (from == address(0) || to == address(0));
 
-      // ---- 2. Normal revenue-accrual bookkeeping
       if (from != address(0)) _updateAccount(from);
       if (to   != address(0)) _updateAccount(to);
 
-      // ---- 3. Let OZ mutate balances / totalSupply
       super._update(from, to, value);
 
-      // ---- 4. If totalSupply changed, notify distributor
       if (supplyChanges) {
           uint256 supplyAfter = totalSupply();
           if (supplyAfter != supplyBefore) {

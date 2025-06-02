@@ -11,21 +11,20 @@ import "./token/POWA.sol";
 contract PowaRevenueDistributor is Ownable, ReentrancyGuard {
     using SafeERC20 for IERC20;
 
+    uint256 internal constant WEIGHT_SCALE = 1e18; // 1 ×
+
     address public ocfVault;
     IERC20 public revenueAsset;
+    uint256 public totalWeightedSupply; // cached sum of all epoch weighted supplies
+    Epoch[] public epochs;
 
     struct Epoch {
-        POWA investorToken;
-        POWA contributorToken;
-        uint64 weight;                 // 1e4 ≃ 100 %
-        uint256 invWeightedSupply;     // investorToken.totalSupply * weight
-        uint256 conWeightedSupply;     // contributorToken.totalSupply * weight
+        POWA   investorToken;
+        POWA   contributorToken;
+        uint128 weightFP;          // 18-dec fixed-point factor
+        uint256 invWeightedSupply; // cached = totalSupply * weightFP / WEIGHT_SCALE
+        uint256 conWeightedSupply;
     }
-
-    uint256 public totalWeightedSupply; // sum of all epoch weighted supplies
-
-
-    Epoch[] public epochs;
 
     event EpochCreated(
         uint256 indexed epochIdx,
@@ -46,8 +45,10 @@ contract PowaRevenueDistributor is Ownable, ReentrancyGuard {
         string calldata contributorSymbol,
         uint256 initialInvestorSupply,
         uint256 initialContributorSupply,
-        uint64 epochWeight
+        uint128 weightFP
     ) external onlyOwner {
+        require(weightFP > 0 && weightFP <= 1e24, "Epoch weight out of range");
+
         POWA investorToken = new POWA(
             investorName,
             investorSymbol,
@@ -68,13 +69,13 @@ contract PowaRevenueDistributor is Ownable, ReentrancyGuard {
             epochs.length
         );
 
-        uint invWeightedSupply = initialInvestorSupply * epochWeight;
-        uint conWeightedSupply = initialContributorSupply * epochWeight;
+        uint invWeightedSupply = Math.mulDiv(initialInvestorSupply, weightFP, WEIGHT_SCALE);
+        uint conWeightedSupply = Math.mulDiv(initialContributorSupply, weightFP, WEIGHT_SCALE);
 
         epochs.push(Epoch({
             investorToken: investorToken,
             contributorToken: contributorToken,
-            weight: epochWeight,
+            weightFP: weightFP,
             invWeightedSupply: invWeightedSupply,
             conWeightedSupply: conWeightedSupply
         }));
@@ -94,21 +95,31 @@ contract PowaRevenueDistributor is Ownable, ReentrancyGuard {
         uint256 oldSupply,
         uint256 newSupply
     ) external {
+        require(epochIdx < epochs.length, "bad index");
         Epoch storage e = epochs[epochIdx];
-        bool isInvestorToken = msg.sender == address(e.investorToken);
 
+        bool isInvestor = msg.sender == address(e.investorToken);
         require(
-            isInvestorToken ||
-            msg.sender == address(e.contributorToken),
+            isInvestor || msg.sender == address(e.contributorToken),
             "unauthorised"
         );
 
-        uint256 oldWeighted = oldSupply * e.weight;
-        uint256 newWeighted = newSupply * e.weight;
+        uint256 cachedWeighted = isInvestor
+            ? e.invWeightedSupply
+            : e.conWeightedSupply;
 
-        totalWeightedSupply = totalWeightedSupply - oldWeighted + newWeighted;
+        uint256 cachedSupply =
+            Math.mulDiv(cachedWeighted, WEIGHT_SCALE, e.weightFP); // inverse
 
-        if (isInvestorToken)  {
+        require(cachedSupply == oldSupply, "wrong oldSupply");
+
+        uint256 newWeighted =
+            Math.mulDiv(newSupply, e.weightFP, WEIGHT_SCALE);
+
+        totalWeightedSupply =
+            totalWeightedSupply - cachedWeighted + newWeighted;
+
+        if (isInvestor) {
             e.invWeightedSupply = newWeighted;
         } else {
             e.conWeightedSupply = newWeighted;
