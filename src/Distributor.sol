@@ -20,8 +20,8 @@ contract PowaRevenueDistributor is Ownable, ReentrancyGuard {
     Epoch[] public epochs;
 
     struct Epoch {
-        POWA investorToken;
-        POWA contributorToken;
+        iPOWA investorToken;
+        cPOWA contributorToken;
         uint128 weightFP; // 18-dec fixed-point factor
         uint256 invWeightedSupply; // cached = totalSupply * weightFP / WEIGHT_SCALE
         uint256 conWeightedSupply;
@@ -50,23 +50,21 @@ contract PowaRevenueDistributor is Ownable, ReentrancyGuard {
     ) external onlyOwner {
         require(weightFP > 0 && weightFP <= 1e24, "Epoch weight out of range");
 
-        POWA investorToken = new iPOWA(
+        iPOWA investorToken = new iPOWA(
             investorName,
             investorSymbol,
             initialInvestorSupply,
             revenueAsset,
             address(this),
-            ocfVault,
             epochs.length
         );
 
-        POWA contributorToken = new cPOWA(
+        cPOWA contributorToken = new cPOWA(
             contributorName,
             contributorSymbol,
             initialContributorSupply,
             revenueAsset,
             address(this),
-            ocfVault,
             epochs.length
         );
 
@@ -98,46 +96,6 @@ contract PowaRevenueDistributor is Ownable, ReentrancyGuard {
             address(investorToken),
             address(contributorToken)
         );
-    }
-
-    function notifySupplyUpdate(
-        uint256 epochIdx,
-        uint256 oldSupply,
-        uint256 newSupply
-    ) external {
-        require(epochIdx < epochs.length, "bad index");
-        Epoch storage e = epochs[epochIdx];
-
-        bool isInvestor = msg.sender == address(e.investorToken);
-        require(
-            isInvestor || msg.sender == address(e.contributorToken),
-            "unauthorised"
-        );
-
-        uint256 cachedWeighted = isInvestor
-            ? e.invWeightedSupply
-            : e.conWeightedSupply;
-
-        uint256 cachedSupply = Math.mulDiv(
-            cachedWeighted,
-            WEIGHT_SCALE,
-            e.weightFP
-        ); // inverse
-
-        require(cachedSupply == oldSupply, "wrong oldSupply");
-
-        uint256 newWeighted = Math.mulDiv(newSupply, e.weightFP, WEIGHT_SCALE);
-
-        totalWeightedSupply =
-            totalWeightedSupply -
-            cachedWeighted +
-            newWeighted;
-
-        if (isInvestor) {
-            e.invWeightedSupply = newWeighted;
-        } else {
-            e.conWeightedSupply = newWeighted;
-        }
     }
 
     function depositRevenue(uint256 amount) external nonReentrant {
@@ -172,6 +130,46 @@ contract PowaRevenueDistributor is Ownable, ReentrancyGuard {
                 e.contributorToken.distribute(conSlice);
                 revenueAsset.approve(address(e.contributorToken), 0);
             }
+        }
+    }
+
+    function notifySupplyUpdate(
+        uint256 epochIdx,
+        uint256 oldSupply,
+        uint256 newSupply
+    ) external {
+        require(epochIdx < epochs.length, "bad index");
+        Epoch storage e = epochs[epochIdx];
+
+        bool isInvestor = msg.sender == address(e.investorToken);
+        require(
+            isInvestor || msg.sender == address(e.contributorToken),
+            "unauthorised"
+        );
+
+        uint256 cachedWeighted = isInvestor
+            ? e.invWeightedSupply
+            : e.conWeightedSupply;
+
+        uint256 cachedSupply = Math.mulDiv(
+            cachedWeighted,
+            WEIGHT_SCALE,
+            e.weightFP
+        ); // inverse, for sanity check
+
+        require(cachedSupply == oldSupply, "wrong oldSupply");
+
+        uint256 newWeighted = Math.mulDiv(newSupply, e.weightFP, WEIGHT_SCALE);
+
+        totalWeightedSupply =
+            totalWeightedSupply -
+            cachedWeighted +
+            newWeighted;
+
+        if (isInvestor) {
+            e.invWeightedSupply = newWeighted;
+        } else {
+            e.conWeightedSupply = newWeighted;
         }
     }
 }

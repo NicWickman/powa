@@ -10,7 +10,6 @@ contract cPOWA is POWA {
         uint256 initialSupply,
         IERC20 _revenueToken,
         address _distributor,
-        address initialHolder,
         uint256 _epochIdx
     )
         POWA(
@@ -19,7 +18,6 @@ contract cPOWA is POWA {
             initialSupply,
             _revenueToken,
             _distributor,
-            initialHolder,
             _epochIdx
         )
     {}
@@ -28,5 +26,11 @@ contract cPOWA is POWA {
         address from,
         address to,
         uint256 value
-    ) internal override {}
+    ) internal override {
+        require(
+            msg.sender == distributor.ocfVault(),
+            "cPOWA transfers restricted"
+        );
+        super._update(from, to, value);
+    }
 }

@@ -17,6 +17,15 @@ interface ITarget {
     ) external returns (bytes32);
 }
 
+interface IPowaRevenueDistributor {
+    function ocfVault() external returns (address);
+    function notifySupplyUpdate(
+        uint256 epochIdx,
+        uint256 oldSupply,
+        uint256 newSupply
+    ) external;
+}
+
 abstract contract POWA is ERC20, ReentrancyGuard {
     using SafeERC20 for IERC20;
 
@@ -25,7 +34,7 @@ abstract contract POWA is ERC20, ReentrancyGuard {
         keccak256("POWARevenueReceiver.onClaimRevenue");
 
     IERC20 public revenueToken;
-    address public distributor;
+    IPowaRevenueDistributor public distributor;
 
     /// @dev scaled by 1e18: total revenue per share accrued so far
     uint256 public accRevenuePerShare;
@@ -38,7 +47,7 @@ abstract contract POWA is ERC20, ReentrancyGuard {
         uint256 pending;
     }
 
-    mapping(address => AccountInfo) private accountInfo;
+    mapping(address => AccountInfo) public accountInfo;
 
     event TargetSet(address indexed account, address indexed target);
 
@@ -48,19 +57,18 @@ abstract contract POWA is ERC20, ReentrancyGuard {
         uint256 initialSupply,
         IERC20 _revenueToken,
         address _distributor,
-        address initialHolder,
         uint256 _epochIdx
     ) ERC20(name_, symbol_) {
         require(initialSupply > 0, "zero supply");
         revenueToken = _revenueToken;
-        distributor = _distributor;
+        distributor = IPowaRevenueDistributor(_distributor);
         epochIdx = _epochIdx;
-        _mint(initialHolder, initialSupply);
+        _mint(distributor.ocfVault(), initialSupply);
     }
 
     /// @dev bump the global accumulator; revenueToken must be approved
     function distribute(uint256 revenueAmount) external {
-        require(msg.sender == distributor, "only vault");
+        require(msg.sender == address(distributor), "only distributor");
         require(revenueAmount > 0, "zero revenue");
 
         uint256 supply = totalSupply();
@@ -103,7 +111,7 @@ abstract contract POWA is ERC20, ReentrancyGuard {
         revenueToken.approve(account.target, amt);
         bytes32 res = ITarget(account.target).onClaimRevenue(claimFor, amt);
 
-        // Requiring return hash excludes targetting anything not explicitly implemented to support it
+        // Requiring return hash prevents targetting anything not explicitly implemented to support it
         // It is easy enough to deploy a simple forwarder to EOAs, wallets etc.
         require(
             res == keccak256("POWARevenueReceiver.onClaimRevenue"),
@@ -132,7 +140,7 @@ abstract contract POWA is ERC20, ReentrancyGuard {
         if (supplyChanges) {
             uint256 supplyAfter = totalSupply();
             if (supplyAfter != supplyBefore) {
-                PowaRevenueDistributor(distributor).notifySupplyUpdate(
+                distributor.notifySupplyUpdate(
                     epochIdx,
                     supplyBefore,
                     supplyAfter

@@ -10,7 +10,6 @@ contract iPOWA is POWA {
         uint256 initialSupply,
         IERC20 _revenueToken,
         address _distributor,
-        address initialHolder,
         uint256 _epochIdx
     )
         POWA(
@@ -19,7 +18,6 @@ contract iPOWA is POWA {
             initialSupply,
             _revenueToken,
             _distributor,
-            initialHolder,
             _epochIdx
         )
     {}

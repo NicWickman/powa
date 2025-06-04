@@ -7,12 +7,14 @@ import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 contract SimpleForwarder is Target {
     IERC20 public immutable revenueToken;
 
-    constructor(address _recipient, IERC20 _revenueToken) {
-        require(_recipient != address(0), "invalid recipient");
+    constructor(IERC20 _revenueToken) {
         revenueToken = _revenueToken;
     }
 
-    function onClaimRevenue(address account, uint256 amount) external override returns (bytes32) {
+    function onClaimRevenue(
+        address account,
+        uint256 amount
+    ) external override returns (bytes32) {
         revenueToken.transferFrom(msg.sender, account, amount);
         return TARGET_HASH;
     }
