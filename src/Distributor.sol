@@ -12,12 +12,11 @@ import "./token/iPOWA.sol";
 contract PowaRevenueDistributor is Ownable, ReentrancyGuard {
     using SafeERC20 for IERC20;
 
-    uint256 internal constant WEIGHT_SCALE = 1e18; // 1 ×
+    uint256 internal constant WEIGHT_SCALE = 1e18; // 1×
 
     address public ocfVault;
     IERC20 public revenueAsset;
     uint256 public totalWeightedSupply; // cached sum of all epoch weighted supplies
-    Epoch[] public epochs;
 
     struct Epoch {
         iPOWA investorToken;
@@ -26,6 +25,9 @@ contract PowaRevenueDistributor is Ownable, ReentrancyGuard {
         uint256 invWeightedSupply; // cached = totalSupply * weightFP / WEIGHT_SCALE
         uint256 conWeightedSupply;
     }
+
+    Epoch[] public epochs;
+    bool private inEpochCreation;
 
     event EpochCreated(
         uint256 indexed epochIdx,
@@ -36,9 +38,13 @@ contract PowaRevenueDistributor is Ownable, ReentrancyGuard {
     constructor(IERC20 _revenueAsset, address _ofcVault) Ownable(msg.sender) {
         ocfVault = _ofcVault;
         revenueAsset = _revenueAsset;
+        inEpochCreation = false;
     }
 
-    /* deploy the two (investor and contributor) tokens for a new epoch */
+    /**
+     * @dev Deploy the two (investor and contributor) tokens for a new epoch.
+     *      Suppresses notifySupplyUpdate during the initial minting to ocfVault.
+     */
     function createEpoch(
         string calldata investorName,
         string calldata investorSymbol,
@@ -49,6 +55,9 @@ contract PowaRevenueDistributor is Ownable, ReentrancyGuard {
         uint128 weightFP
     ) external onlyOwner {
         require(weightFP > 0 && weightFP <= 1e24, "Epoch weight out of range");
+
+        // Suppress notifySupplyUpdate during initial mint to ocfVault
+        inEpochCreation = true;
 
         iPOWA investorToken = new iPOWA(
             investorName,
@@ -68,17 +77,19 @@ contract PowaRevenueDistributor is Ownable, ReentrancyGuard {
             epochs.length
         );
 
-        uint invWeightedSupply = Math.mulDiv(
+        // Compute weighted supplies for the new epoch
+        uint256 invWeightedSupply = Math.mulDiv(
             initialInvestorSupply,
             weightFP,
             WEIGHT_SCALE
         );
-        uint conWeightedSupply = Math.mulDiv(
+        uint256 conWeightedSupply = Math.mulDiv(
             initialContributorSupply,
             weightFP,
             WEIGHT_SCALE
         );
 
+        // Push the new epoch struct now that tokens are deployed
         epochs.push(
             Epoch({
                 investorToken: investorToken,
@@ -89,7 +100,11 @@ contract PowaRevenueDistributor is Ownable, ReentrancyGuard {
             })
         );
 
+        // Update the total weighted supply (epoch now exists)
         totalWeightedSupply += invWeightedSupply + conWeightedSupply;
+
+        // Re-enable notifySupplyUpdate for future supply changes
+        inEpochCreation = false;
 
         emit EpochCreated(
             epochs.length - 1,
@@ -138,6 +153,11 @@ contract PowaRevenueDistributor is Ownable, ReentrancyGuard {
         uint256 oldSupply,
         uint256 newSupply
     ) external {
+        // If we're in createEpoch(), skip index check and weight recalculation
+        if (inEpochCreation) {
+            return;
+        }
+
         require(epochIdx < epochs.length, "bad index");
         Epoch storage e = epochs[epochIdx];
 
@@ -155,7 +175,7 @@ contract PowaRevenueDistributor is Ownable, ReentrancyGuard {
             cachedWeighted,
             WEIGHT_SCALE,
             e.weightFP
-        ); // inverse, for sanity check
+        ); // inverse, for sanity
 
         require(cachedSupply == oldSupply, "wrong oldSupply");
 

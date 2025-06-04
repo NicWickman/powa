@@ -28,7 +28,8 @@ contract cPOWA is POWA {
         uint256 value
     ) internal override {
         require(
-            msg.sender == distributor.ocfVault(),
+            msg.sender == address(distributor) ||
+                msg.sender == distributor.ocfVault(),
             "cPOWA transfers restricted"
         );
         super._update(from, to, value);
