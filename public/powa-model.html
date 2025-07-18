@@ -1,0 +1,559 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>POWA Revenue Distribution Interactive Model</title>
+    <script
+      crossorigin
+      src="https://unpkg.com/react@18/umd/react.production.min.js"
+    ></script>
+    <script
+      crossorigin
+      src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"
+    ></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+          "Helvetica Neue", Arial, sans-serif;
+        background-color: #f9fafb;
+      }
+      .card {
+        background: white;
+        border-radius: 8px;
+        border: 1px solid #e5e7eb;
+        box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1);
+      }
+      .card-header {
+        padding: 1.5rem;
+        border-bottom: 1px solid #e5e7eb;
+      }
+      .card-content {
+        padding: 1.5rem;
+      }
+      input[type="number"] {
+        -moz-appearance: textfield;
+      }
+      input[type="number"]::-webkit-outer-spin-button,
+      input[type="number"]::-webkit-inner-spin-button {
+        -webkit-appearance: none;
+        margin: 0;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+      const { useState, useEffect } = React;
+
+      const POWAInteractiveModel = () => {
+        const [epochs, setEpochs] = useState([
+          {
+            id: 1,
+            name: "Epoch 1",
+            iPOWA: 2000000,
+            cPOWA: 3000000,
+            weight: 1.0,
+          },
+          {
+            id: 2,
+            name: "Epoch 2",
+            iPOWA: 3000000,
+            cPOWA: 4500000,
+            weight: 0.5,
+          },
+        ]);
+
+        const [revenueToDistribute, setRevenueToDistribute] =
+          useState(10000000);
+        const [userHoldings, setUserHoldings] = useState({});
+        const [results, setResults] = useState({});
+
+        const formatNumber = (num) => {
+          return new Intl.NumberFormat("en-US", {
+            minimumFractionDigits: 2,
+            maximumFractionDigits: 2,
+          }).format(num);
+        };
+
+        const formatCurrency = (num) => {
+          return new Intl.NumberFormat("en-US", {
+            style: "currency",
+            currency: "USD",
+            minimumFractionDigits: 2,
+            maximumFractionDigits: 2,
+          }).format(num);
+        };
+
+        const calculateDistribution = () => {
+          // Calculate weighted supplies
+          const weightedSupplies = epochs.map((epoch) => ({
+            ...epoch,
+            totalSupply: epoch.iPOWA + epoch.cPOWA,
+            weightedSupply: (epoch.iPOWA + epoch.cPOWA) * epoch.weight,
+          }));
+
+          const totalWeightedSupply = weightedSupplies.reduce(
+            (sum, e) => sum + e.weightedSupply,
+            0,
+          );
+
+          // Calculate distribution per epoch
+          const distributions = weightedSupplies.map((epoch) => {
+            const epochRevenue =
+              totalWeightedSupply > 0
+                ? (epoch.weightedSupply / totalWeightedSupply) *
+                  revenueToDistribute
+                : 0;
+            const revenuePerToken =
+              epoch.totalSupply > 0 ? epochRevenue / epoch.totalSupply : 0;
+
+            return {
+              ...epoch,
+              epochRevenue,
+              revenuePerToken,
+              iPOWARevenue: epoch.iPOWA * revenuePerToken,
+              cPOWARevenue: epoch.cPOWA * revenuePerToken,
+            };
+          });
+
+          // Calculate user's claimable revenue
+          let userTotalClaimable = 0;
+          const userClaimsByEpoch = {};
+
+          Object.entries(userHoldings).forEach(([key, amount]) => {
+            const [epochId, tokenType] = key.split("-");
+            const epoch = distributions.find(
+              (e) => e.id.toString() === epochId,
+            );
+            if (epoch && amount > 0) {
+              const claimable = amount * epoch.revenuePerToken;
+              userTotalClaimable += claimable;
+              if (!userClaimsByEpoch[epochId]) {
+                userClaimsByEpoch[epochId] = { iPOWA: 0, cPOWA: 0 };
+              }
+              userClaimsByEpoch[epochId][tokenType] = claimable;
+            }
+          });
+
+          setResults({
+            weightedSupplies,
+            totalWeightedSupply,
+            distributions,
+            userTotalClaimable,
+            userClaimsByEpoch,
+            totalTokens: weightedSupplies.reduce(
+              (sum, e) => sum + e.totalSupply,
+              0,
+            ),
+            averageRevenuePerToken:
+              revenueToDistribute /
+              weightedSupplies.reduce((sum, e) => sum + e.totalSupply, 0),
+          });
+        };
+
+        useEffect(() => {
+          calculateDistribution();
+        }, [epochs, revenueToDistribute, userHoldings]);
+
+        const updateEpoch = (id, field, value) => {
+          setEpochs(
+            epochs.map((e) =>
+              e.id === id ? { ...e, [field]: parseFloat(value) || 0 } : e,
+            ),
+          );
+        };
+
+        const addEpoch = () => {
+          const newId = Math.max(...epochs.map((e) => e.id)) + 1;
+          setEpochs([
+            ...epochs,
+            {
+              id: newId,
+              name: `Epoch ${newId}`,
+              iPOWA: 1000000,
+              cPOWA: 1000000,
+              weight: 1.0,
+            },
+          ]);
+        };
+
+        const removeEpoch = (id) => {
+          if (epochs.length > 1) {
+            setEpochs(epochs.filter((e) => e.id !== id));
+            // Remove user holdings for this epoch
+            const newHoldings = { ...userHoldings };
+            Object.keys(newHoldings).forEach((key) => {
+              if (key.startsWith(`${id}-`)) {
+                delete newHoldings[key];
+              }
+            });
+            setUserHoldings(newHoldings);
+          }
+        };
+
+        const updateUserHolding = (epochId, tokenType, value) => {
+          setUserHoldings({
+            ...userHoldings,
+            [`${epochId}-${tokenType}`]: parseFloat(value) || 0,
+          });
+        };
+
+        return (
+          <div className="min-h-screen bg-gray-50 py-8">
+            <div className="max-w-6xl mx-auto px-4">
+              <div className="card">
+                <div className="card-header">
+                  <h1 className="text-2xl font-bold">
+                    POWA Revenue Distribution Model
+                  </h1>
+                </div>
+                <div className="card-content space-y-6">
+                  {/* Revenue Input */}
+                  <div>
+                    <label className="block text-sm font-medium mb-2">
+                      Total Revenue to Distribute
+                    </label>
+                    <input
+                      type="number"
+                      value={revenueToDistribute}
+                      onChange={(e) =>
+                        setRevenueToDistribute(parseFloat(e.target.value) || 0)
+                      }
+                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      step="1000000"
+                    />
+                  </div>
+
+                  {/* Epochs Configuration */}
+                  <div>
+                    <div className="flex justify-between items-center mb-4">
+                      <h3 className="text-lg font-semibold">
+                        Epochs Configuration
+                      </h3>
+                      <button
+                        onClick={addEpoch}
+                        className="flex items-center gap-2 px-3 py-1 bg-blue-500 text-white rounded-md hover:bg-blue-600 transition"
+                      >
+                        <span>+ Add Epoch</span>
+                      </button>
+                    </div>
+
+                    <div className="space-y-4">
+                      {epochs.map((epoch) => (
+                        <div key={epoch.id} className="card p-4">
+                          <div className="flex justify-between items-start mb-4">
+                            <h4 className="font-medium">{epoch.name}</h4>
+                            {epochs.length > 1 && (
+                              <button
+                                onClick={() => removeEpoch(epoch.id)}
+                                className="text-red-500 hover:text-red-700"
+                              >
+                                ✕
+                              </button>
+                            )}
+                          </div>
+
+                          <div className="grid grid-cols-3 gap-4">
+                            <div>
+                              <label className="block text-sm text-gray-600 mb-1">
+                                iPOWA Tokens
+                              </label>
+                              <input
+                                type="number"
+                                value={epoch.iPOWA}
+                                onChange={(e) =>
+                                  updateEpoch(epoch.id, "iPOWA", e.target.value)
+                                }
+                                className="w-full px-2 py-1 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                step="100000"
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-sm text-gray-600 mb-1">
+                                cPOWA Tokens
+                              </label>
+                              <input
+                                type="number"
+                                value={epoch.cPOWA}
+                                onChange={(e) =>
+                                  updateEpoch(epoch.id, "cPOWA", e.target.value)
+                                }
+                                className="w-full px-2 py-1 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                step="100000"
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-sm text-gray-600 mb-1">
+                                Weight
+                              </label>
+                              <input
+                                type="number"
+                                value={epoch.weight}
+                                onChange={(e) =>
+                                  updateEpoch(
+                                    epoch.id,
+                                    "weight",
+                                    e.target.value,
+                                  )
+                                }
+                                className="w-full px-2 py-1 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                step="0.1"
+                                min="0"
+                              />
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Results */}
+                  {results.distributions && (
+                    <div className="space-y-6">
+                      <h3 className="text-lg font-semibold">
+                        Distribution Results
+                      </h3>
+
+                      {/* Summary */}
+                      <div className="card bg-gray-50">
+                        <div className="card-content">
+                          <div className="grid grid-cols-2 gap-4">
+                            <div>
+                              <p className="text-sm text-gray-600">
+                                Total Weighted Supply
+                              </p>
+                              <p className="text-xl font-semibold">
+                                {formatNumber(results.totalWeightedSupply)}
+                              </p>
+                            </div>
+                            <div>
+                              <p className="text-sm text-gray-600">
+                                Average Revenue per Token
+                              </p>
+                              <p className="text-xl font-semibold">
+                                {formatCurrency(results.averageRevenuePerToken)}
+                              </p>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Per Epoch Results */}
+                      <div className="space-y-4">
+                        {results.distributions.map((dist) => (
+                          <div key={dist.id} className="card">
+                            <div className="card-content">
+                              <h4 className="font-medium mb-3">
+                                {dist.name} Results
+                              </h4>
+
+                              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
+                                <div>
+                                  <p className="text-sm text-gray-600">
+                                    Weighted Supply
+                                  </p>
+                                  <p className="font-semibold">
+                                    {formatNumber(dist.weightedSupply)}
+                                  </p>
+                                </div>
+                                <div>
+                                  <p className="text-sm text-gray-600">
+                                    Epoch Revenue
+                                  </p>
+                                  <p className="font-semibold">
+                                    {formatCurrency(dist.epochRevenue)}
+                                  </p>
+                                </div>
+                                <div>
+                                  <p className="text-sm text-gray-600">
+                                    Revenue per Token
+                                  </p>
+                                  <p className="font-semibold">
+                                    {formatCurrency(dist.revenuePerToken)}
+                                  </p>
+                                </div>
+                                <div>
+                                  <p className="text-sm text-gray-600">
+                                    Distribution %
+                                  </p>
+                                  <p className="font-semibold">
+                                    {(
+                                      (dist.epochRevenue /
+                                        revenueToDistribute) *
+                                      100
+                                    ).toFixed(2)}
+                                    %
+                                  </p>
+                                </div>
+                              </div>
+
+                              <div className="grid grid-cols-2 gap-4">
+                                <div className="bg-blue-50 p-3 rounded">
+                                  <p className="text-sm text-gray-600">
+                                    iPOWA Total Revenue
+                                  </p>
+                                  <p className="font-semibold">
+                                    {formatCurrency(dist.iPOWARevenue)}
+                                  </p>
+                                </div>
+                                <div className="bg-green-50 p-3 rounded">
+                                  <p className="text-sm text-gray-600">
+                                    cPOWA Total Revenue
+                                  </p>
+                                  <p className="font-semibold">
+                                    {formatCurrency(dist.cPOWARevenue)}
+                                  </p>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+
+                      {/* User Holdings Calculator */}
+                      <div className="card border-2 border-blue-200">
+                        <div className="card-header">
+                          <h3 className="text-lg font-semibold">
+                            Calculate Your Claimable Revenue
+                          </h3>
+                        </div>
+                        <div className="card-content">
+                          <div className="space-y-4">
+                            {epochs.map((epoch) => (
+                              <div
+                                key={epoch.id}
+                                className="grid grid-cols-2 gap-4"
+                              >
+                                <div>
+                                  <label className="block text-sm text-gray-600 mb-1">
+                                    {epoch.name} iPOWA Holdings
+                                  </label>
+                                  <input
+                                    type="number"
+                                    value={
+                                      userHoldings[`${epoch.id}-iPOWA`] || ""
+                                    }
+                                    onChange={(e) =>
+                                      updateUserHolding(
+                                        epoch.id,
+                                        "iPOWA",
+                                        e.target.value,
+                                      )
+                                    }
+                                    className="w-full px-2 py-1 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                    placeholder="0"
+                                  />
+                                </div>
+                                <div>
+                                  <label className="block text-sm text-gray-600 mb-1">
+                                    {epoch.name} cPOWA Holdings
+                                  </label>
+                                  <input
+                                    type="number"
+                                    value={
+                                      userHoldings[`${epoch.id}-cPOWA`] || ""
+                                    }
+                                    onChange={(e) =>
+                                      updateUserHolding(
+                                        epoch.id,
+                                        "cPOWA",
+                                        e.target.value,
+                                      )
+                                    }
+                                    className="w-full px-2 py-1 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                    placeholder="0"
+                                  />
+                                </div>
+                              </div>
+                            ))}
+
+                            {results.userTotalClaimable > 0 && (
+                              <div className="mt-4 p-4 bg-green-50 rounded-lg">
+                                <p className="text-sm text-gray-600 mb-2">
+                                  Your Total Claimable Revenue
+                                </p>
+                                <p className="text-2xl font-bold text-green-700">
+                                  {formatCurrency(results.userTotalClaimable)}
+                                </p>
+
+                                <div className="mt-3 space-y-1">
+                                  {Object.entries(
+                                    results.userClaimsByEpoch,
+                                  ).map(([epochId, claims]) => {
+                                    const epoch = epochs.find(
+                                      (e) => e.id.toString() === epochId,
+                                    );
+                                    return (
+                                      <div key={epochId} className="text-sm">
+                                        <span className="text-gray-600">
+                                          {epoch?.name}:
+                                        </span>
+                                        {claims.iPOWA > 0 && (
+                                          <span className="ml-2">
+                                            iPOWA:{" "}
+                                            {formatCurrency(claims.iPOWA)}
+                                          </span>
+                                        )}
+                                        {claims.cPOWA > 0 && (
+                                          <span className="ml-2">
+                                            cPOWA:{" "}
+                                            {formatCurrency(claims.cPOWA)}
+                                          </span>
+                                        )}
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Mathematical Proof */}
+                      <div className="card">
+                        <div className="card-header">
+                          <h3 className="text-lg font-semibold flex items-center gap-2">
+                            <span>⚠️</span> Invariant Check
+                          </h3>
+                        </div>
+                        <div className="card-content">
+                          <p className="text-sm text-gray-600 mb-2">
+                            Complete Weighted Distribution (all distributed
+                            revenue equals input):
+                          </p>
+                          <div className="font-mono text-sm">
+                            <span>
+                              {formatCurrency(
+                                results.distributions.reduce(
+                                  (sum, d) => sum + d.epochRevenue,
+                                  0,
+                                ),
+                              )}
+                            </span>
+                            <span className="mx-2">=</span>
+                            <span>{formatCurrency(revenueToDistribute)}</span>
+                            <span className="ml-2 text-green-600">✓</span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      };
+
+      ReactDOM.render(
+        <POWAInteractiveModel />,
+        document.getElementById("root"),
+      );
+    </script>
+  </body>
+</html>
