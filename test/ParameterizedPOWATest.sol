@@ -156,6 +156,9 @@ contract ParameterizedPOWATest is Test {
         uint256 difference = depositedRevenue > totalDistributed ? 
             (depositedRevenue - totalDistributed) : (totalDistributed - depositedRevenue);
         console2.log("Difference:        ", difference, "wei");
+        if (difference > 0){
+            console2.log("                   ", "Dust is OK - it just rolls forward to the next distribution");
+        }
     }
     
     function testUserClaims() public {
