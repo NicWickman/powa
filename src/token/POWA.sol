@@ -8,8 +8,6 @@ import "@openzeppelin/contracts/utils/math/Math.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
-import "../Distributor.sol";
-
 interface ITarget {
     function onClaimRevenue(
         address account,
