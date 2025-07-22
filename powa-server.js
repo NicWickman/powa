@@ -108,8 +108,5 @@ app.get("/health", (req, res) => {
 
 app.listen(PORT, () => {
   console.log(`POWA dev server running at http://localhost:${PORT}`);
-  console.log("\nMake sure you have:");
-  console.log("1. Forge installed and in your PATH");
-  console.log('2. Run "npm install express cors" if you haven\'t already');
   console.log("\nPress Ctrl+C to stop the server");
 });
